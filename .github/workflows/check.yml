@@ -1,0 +1,38 @@
+name: Check Green River Reservoir
+
+on:
+  schedule:
+    - cron: '0 13 * * *'  # 9 AM EDT (UTC-4)
+  workflow_dispatch:       # lets you trigger a test run manually from GitHub
+
+permissions:
+  contents: write          # needed to commit the state file back
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run availability check
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+        run: python check_greenriver.py
+
+      - name: Save state back to repo
+        run: |
+          git config user.name  "campsite-bot"
+          git config user.email "action@github.com"
+          git add last_alerted.json
+          git diff --staged --quiet || git commit -m "chore: update availability state"
+          git push
