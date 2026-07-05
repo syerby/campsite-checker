@@ -26,7 +26,7 @@ jobs:
 
       - name: Run availability check
         env:
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python check_greenriver.py
 
       - name: Save state back to repo

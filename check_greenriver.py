@@ -32,9 +32,9 @@ BOOK_URL      = (
     f"?contractCode={CONTRACT_CODE}&parkId={PARK_ID}"
 )
 
-NOTIFY_EMAIL      = "syerby@gmail.com"
-FROM_EMAIL        = "syerby@gmail.com"
-SENDGRID_API_KEY  = os.environ.get("SENDGRID_API_KEY", "")
+NOTIFY_EMAIL    = "syerby@gmail.com"
+FROM_EMAIL      = "onboarding@resend.dev"
+RESEND_API_KEY  = os.environ.get("RESEND_API_KEY", "")
 
 # Season: third weekend in May → second Monday in October
 SEASON_START_2026 = date(2026, 5, 16)
@@ -172,8 +172,8 @@ def window_key(arrival: date, nights: int) -> str:
 # ── Email via SendGrid ────────────────────────────────────────────────────────
 
 def send_email(new_windows: list):
-    if not SENDGRID_API_KEY:
-        print("No SENDGRID_API_KEY — skipping email.")
+    if not RESEND_API_KEY:
+        print("No RESEND_API_KEY — skipping email.")
         return
 
     lines = []
@@ -189,22 +189,21 @@ def send_email(new_windows: list):
         + f"\n\nBook now:\n{BOOK_URL}\n"
     )
 
-    payload = {
-        "personalizations": [{"to": [{"email": NOTIFY_EMAIL}]}],
-        "from": {"email": FROM_EMAIL},
-        "subject": f"Green River Reservoir: {len(new_windows)} site(s) open!",
-        "content": [{"type": "text/plain", "value": body}],
-    }
     resp = requests.post(
-        "https://api.sendgrid.com/v3/mail/send",
+        "https://api.resend.com/emails",
         headers={
-            "Authorization": f"Bearer {SENDGRID_API_KEY}",
+            "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
         },
-        json=payload,
+        json={
+            "from": FROM_EMAIL,
+            "to": [NOTIFY_EMAIL],
+            "subject": f"Green River Reservoir: {len(new_windows)} site(s) open!",
+            "text": body,
+        },
         timeout=15,
     )
-    if resp.status_code == 202:
+    if resp.status_code == 200:
         print(f"Email sent: {len(new_windows)} new opening(s).")
     else:
         print(f"Email failed ({resp.status_code}): {resp.text}")
