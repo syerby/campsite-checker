@@ -59,15 +59,21 @@ def add_months(d: date, months: int) -> date:
     return date(year, month, day)
 
 
-def windows_with_sat_and_sun(start: date, end: date, min_nights: int = 2, max_nights: int = 4):
+def generate_2026_windows(start: date, end: date):
+    """Yield (arrival, nights) for:
+    - Any 2-4 night stay that covers both Sat and Sun
+    - Any 2-night Thu+Fri stay
+    """
     d = start
     while d <= end:
-        for nights in range(min_nights, max_nights + 1):
+        for nights in range(2, 5):
             checkout = d + timedelta(days=nights)
             if checkout > end:
                 continue
             stay_days = {(d + timedelta(days=i)).weekday() for i in range(nights)}
-            if {5, 6}.issubset(stay_days):
+            sat_sun  = {5, 6}.issubset(stay_days)
+            thu_fri  = stay_days == {3, 4}  # exactly Thu+Fri, 2 nights
+            if sat_sun or thu_fri:
                 yield (d, nights)
         d += timedelta(days=1)
 
@@ -247,7 +253,7 @@ def main():
     current  = {}
 
     check_start_2026 = max(today, SEASON_START_2026)
-    windows_2026 = list(windows_with_sat_and_sun(check_start_2026, SEASON_END_2026))
+    windows_2026 = list(generate_2026_windows(check_start_2026, SEASON_END_2026))
     print(f"2026: {len(windows_2026)} Sat+Sun window(s) to check")
     for arrival, nights in windows_2026:
         print(f"  {arrival} x{nights}n ... ", end="", flush=True)
