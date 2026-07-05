@@ -35,4 +35,5 @@ jobs:
           git config user.email "action@github.com"
           git add --force last_alerted.json || true
           git diff --staged --quiet && echo "No state changes to commit" || git commit -m "chore: update availability state"
-          git push || echo "Nothing to push"
+          git pull --rebase origin main
+          git push
