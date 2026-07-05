@@ -171,23 +171,34 @@ def window_key(arrival: date, nights: int) -> str:
 
 # ── Email via SendGrid ────────────────────────────────────────────────────────
 
-def send_email(new_windows: list):
+def send_email(new_windows: list, all_available: set):
     if not RESEND_API_KEY:
         print("No RESEND_API_KEY — skipping email.")
         return
 
-    lines = []
-    for arrival, nights in sorted(new_windows):
-        checkout = arrival + timedelta(days=nights)
-        lines.append(
-            f"  {arrival.strftime('%a %b %-d')} to {checkout.strftime('%a %b %-d')} ({nights} nights)"
+    if all_available:
+        lines = []
+        for key in sorted(all_available):
+            d_str, n_str = key.split(":")
+            arrival  = date.fromisoformat(d_str)
+            nights   = int(n_str)
+            checkout = arrival + timedelta(days=nights)
+            flag = " *** NEW ***" if key in {window_key(a, n) for a, n in new_windows} else ""
+            lines.append(
+                f"  {arrival.strftime('%a %b %-d')} to {checkout.strftime('%a %b %-d')} ({nights} nights){flag}"
+            )
+        subject = f"Green River Reservoir: {len(all_available)} site(s) open!"
+        body = (
+            "Available windows at Green River Reservoir:\n\n"
+            + "\n".join(lines)
+            + f"\n\nBook now:\n{BOOK_URL}\n"
         )
-
-    body = (
-        "New availability at Green River Reservoir!\n\n"
-        + "\n".join(lines)
-        + f"\n\nBook now:\n{BOOK_URL}\n"
-    )
+    else:
+        subject = "Green River Reservoir: nothing available today"
+        body = (
+            "No campsites are currently available at Green River Reservoir.\n\n"
+            "This check runs daily at 9 AM — you'll hear from us tomorrow.\n"
+        )
 
     resp = requests.post(
         "https://api.resend.com/emails",
@@ -198,13 +209,13 @@ def send_email(new_windows: list):
         json={
             "from": FROM_EMAIL,
             "to": [NOTIFY_EMAIL],
-            "subject": f"Green River Reservoir: {len(new_windows)} site(s) open!",
+            "subject": subject,
             "text": body,
         },
         timeout=15,
     )
     if resp.status_code == 200:
-        print(f"Email sent: {len(new_windows)} new opening(s).")
+        print("Email sent.")
     else:
         print(f"Email failed ({resp.status_code}): {resp.text}")
 
@@ -242,16 +253,14 @@ def main():
                 current.add(window_key(arrival, nights))
             time.sleep(DELAY_BETWEEN_REQUESTS)
 
-    # Alert only on genuinely new openings
+    # Always send a daily summary; flag any windows that are newly open
     new_openings = current - previous
-    if new_openings:
-        new_windows = []
-        for key in new_openings:
-            d_str, n_str = key.split(":")
-            new_windows.append((date.fromisoformat(d_str), int(n_str)))
-        send_email(new_windows)
-    else:
-        print("No new openings found.")
+    new_windows  = []
+    for key in new_openings:
+        d_str, n_str = key.split(":")
+        new_windows.append((date.fromisoformat(d_str), int(n_str)))
+
+    send_email(new_windows, current)
 
     save_state(current)
     print("Done.")
