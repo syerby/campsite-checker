@@ -38,7 +38,7 @@ RESEND_API_KEY  = os.environ.get("RESEND_API_KEY", "")
 
 # Season: third weekend in May → second Monday in October
 SEASON_START_2026 = date(2026, 5, 16)
-SEASON_END_2026   = date(2026, 10, 12)
+SEASON_END_2026   = date(2026, 8, 31)
 SEASON_START_2027 = date(2027, 5, 15)
 SEASON_END_2027   = date(2027, 10, 11)
 
