@@ -13,6 +13,14 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Restore state from cache
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: last_alerted.json
+          key: campsite-state-never-matches
+          restore-keys: campsite-state-
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -21,10 +29,15 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4
 
-      - name: Show script version
-        run: grep "Available windows\|New availability\|def get_available_sites" check_greenriver.py
-
       - name: Run availability check
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python check_greenriver.py
+
+      - name: Save state to cache
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        if: always()
+        with:
+          path: last_alerted.json
+          key: campsite-state-${{ github.run_id }}
