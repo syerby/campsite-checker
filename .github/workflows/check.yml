@@ -6,7 +6,7 @@ on:
   workflow_dispatch:       # lets you trigger a test run manually from GitHub
 
 permissions:
-  contents: write
+  contents: read           # read-only — we no longer commit state to the repo
 
 jobs:
   check:
@@ -15,6 +15,13 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Restore state from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: last_alerted.json
+          key: campsite-state-never-matches          # forces a cache miss so restore-keys runs
+          restore-keys: campsite-state-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,20 +36,9 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python check_greenriver.py
 
-      - name: Save state back to repo
-        run: |
-          git config user.name  "campsite-bot"
-          git config user.email "action@github.com"
-
-          # Capture the state the script just wrote
-          STATE=$(cat last_alerted.json)
-
-          # Reset to whatever is on the remote right now (avoids any push conflicts)
-          git fetch origin main
-          git reset --hard origin/main
-
-          # Restore the state and commit if it changed
-          echo "$STATE" > last_alerted.json
-          git add last_alerted.json
-          git diff --staged --quiet && echo "No state changes" || git commit -m "chore: update availability state"
-          git push origin main
+      - name: Save state to cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: last_alerted.json
+          key: campsite-state-${{ github.run_id }}
