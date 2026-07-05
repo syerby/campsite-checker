@@ -9,8 +9,9 @@ Sends a daily summary email; flags newly opened windows with *** NEW ***.
 
 import json
 import os
+import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -36,7 +37,6 @@ NOTIFY_EMAIL   = "syerby@gmail.com"
 FROM_EMAIL     = "onboarding@resend.dev"
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 
-# Season: third weekend in May → second Monday in October
 SEASON_START_2026 = date(2026, 5, 16)
 SEASON_END_2026   = date(2026, 8, 31)
 SEASON_START_2027 = date(2027, 5, 15)
@@ -44,7 +44,7 @@ SEASON_END_2027   = date(2027, 10, 11)
 
 STATE_FILE = Path(__file__).parent / "last_alerted.json"
 
-DELAY_BETWEEN_REQUESTS = 2  # seconds
+DELAY_BETWEEN_REQUESTS = 2
 
 # ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ def windows_with_sat_and_sun(start: date, end: date, min_nights: int = 2, max_ni
             if checkout > end:
                 continue
             stay_days = {(d + timedelta(days=i)).weekday() for i in range(nights)}
-            if {5, 6}.issubset(stay_days):  # 5=Sat 6=Sun
+            if {5, 6}.issubset(stay_days):
                 yield (d, nights)
         d += timedelta(days=1)
 
@@ -103,43 +103,50 @@ def make_session() -> requests.Session:
     return session
 
 
-def get_available_sites(html: str) -> list:
+def get_available_sites(html: str, arrival: date, nights: int) -> list:
     """
-    Parse the ReserveAmerica calendar HTML and return sites available for the
-    entire requested stay. The calendar is a table where each row is one site
-    (name in first cell, e.g. [T01]) and each subsequent cell is one night,
-    shown as a linked "A" if available or plain "R"/"X" if not.
-    A site is only included if ALL night-cells contain a linked "A".
+    Parse the ReserveAmerica calendar HTML.
+
+    The calendar shows a 2-week grid: each row is a site, each cell is one
+    night. Available nights render as a link: <a href="...arvdate=M/D/YYYY...">A</a>.
+    We extract the actual date from the link href, so we only count a site as
+    available when ALL nights of the requested stay have a linked 'A'.
     """
     soup = BeautifulSoup(html, "html.parser")
+    requested_dates = {arrival + timedelta(days=i) for i in range(nights)}
     sites = []
 
     for row in soup.find_all("tr"):
         cells = row.find_all("td")
-        if len(cells) < 2:
+        if len(cells) < 3:
             continue
 
         site_name = cells[0].get_text(strip=True).strip("[]")
-        if not site_name or site_name.upper() in ("A", "R", "X"):
+        if not site_name or site_name.upper() in ("A", "R", "X", "SITE", "LOOP", ""):
             continue
 
-        date_cells = cells[1:]
-        if not date_cells:
-            continue
+        # Collect dates that have a linked "A" in this row
+        available_dates = set()
+        for cell in cells[1:]:
+            link = cell.find("a")
+            if not link or link.get_text(strip=True).upper() != "A":
+                continue
+            href = link.get("href", "")
+            m = re.search(r"arvdate=(\d+/\d+/\d{4})", href)
+            if m:
+                try:
+                    cell_date = datetime.strptime(m.group(1), "%m/%d/%Y").date()
+                    available_dates.add(cell_date)
+                except ValueError:
+                    pass
 
-        # Every night must be a linked "A" for the site to be truly available
-        all_open = all(
-            c.find("a") and c.find("a").get_text(strip=True).upper() == "A"
-            for c in date_cells
-        )
-        if all_open:
+        if requested_dates and requested_dates.issubset(available_dates):
             sites.append(site_name)
 
     return sites
 
 
 def check_window(session: requests.Session, arrival: date, nights: int) -> list:
-    """Return list of available site names for this window (empty = none)."""
     params = {
         "contractCode": CONTRACT_CODE,
         "parkId": PARK_ID,
@@ -150,7 +157,7 @@ def check_window(session: requests.Session, arrival: date, nights: int) -> list:
     try:
         resp = session.get(f"{BASE_URL}/campsiteCalendar.do", params=params, timeout=15)
         resp.raise_for_status()
-        return get_available_sites(resp.text)
+        return get_available_sites(resp.text, arrival, nights)
     except requests.RequestException as e:
         print(f"  [warn] {arrival} x{nights}n — {e}")
         return []
@@ -158,11 +165,9 @@ def check_window(session: requests.Session, arrival: date, nights: int) -> list:
 # ── State ─────────────────────────────────────────────────────────────────────
 
 def load_state() -> dict:
-    """Returns dict of window_key → list of site names."""
     if STATE_FILE.exists():
         data = json.loads(STATE_FILE.read_text())
         available = data.get("available", {})
-        # Handle old list format gracefully
         if isinstance(available, list):
             return {k: [] for k in available}
         return available
@@ -180,7 +185,7 @@ def window_key(arrival: date, nights: int) -> str:
 
 def send_email(current: dict, previous: dict):
     if not RESEND_API_KEY:
-        print("No RESEND_API_KEY — skipping email.")
+        print("No RESEND_API_KEY set — skipping email.")
         return
 
     new_keys = set(current) - set(previous)
@@ -193,23 +198,23 @@ def send_email(current: dict, previous: dict):
             nights        = int(n_str)
             checkout      = arrival + timedelta(days=nights)
             site_names    = current[key]
-            sites_str     = ", ".join(site_names) if site_names else "see website for details"
+            sites_str     = ", ".join(site_names) if site_names else "see website"
             flag          = "  *** NEW ***" if key in new_keys else ""
             lines.append(
                 f"  {arrival.strftime('%a %b %-d')} to {checkout.strftime('%a %b %-d')}"
                 f" ({nights} nights) — {sites_str}{flag}"
             )
         subject = f"Green River Reservoir: {len(current)} window(s) open!"
-        body = (
+        body    = (
             "Available windows at Green River Reservoir:\n\n"
             + "\n".join(lines)
             + f"\n\nBook now:\n{BOOK_URL}\n"
         )
     else:
         subject = "Green River Reservoir: nothing available today"
-        body = (
-            "No campsites are currently available at Green River Reservoir.\n\n"
-            "This check runs daily at 9 AM — you'll hear from us tomorrow.\n"
+        body    = (
+            "No campsites available at Green River Reservoir today.\n\n"
+            "This check runs daily at 9 AM EDT — you will hear from us tomorrow.\n"
         )
 
     resp = requests.post(
@@ -235,16 +240,15 @@ def send_email(current: dict, previous: dict):
 
 def main():
     today = date.today()
-    print(f"Checking Green River Reservoir — {today.isoformat()}")
+    print(f"=== Green River Reservoir check — {today.isoformat()} ===")
 
     session  = make_session()
     previous = load_state()
     current  = {}
 
-    # 2026: Sat+Sun windows through end of August
     check_start_2026 = max(today, SEASON_START_2026)
     windows_2026 = list(windows_with_sat_and_sun(check_start_2026, SEASON_END_2026))
-    print(f"2026: checking {len(windows_2026)} Sat+Sun window(s)...")
+    print(f"2026: {len(windows_2026)} Sat+Sun window(s) to check")
     for arrival, nights in windows_2026:
         print(f"  {arrival} x{nights}n ... ", end="", flush=True)
         sites = check_window(session, arrival, nights)
@@ -253,17 +257,16 @@ def main():
             current[window_key(arrival, nights)] = sites
         time.sleep(DELAY_BETWEEN_REQUESTS)
 
-    # 2027: Thu-Mon windows inside the 11-month booking window
     if today >= date(2026, 6, 15):
         windows_2027 = list(thu_mon_windows_in_booking_range(today, SEASON_START_2027, SEASON_END_2027))
-        print(f"2027: checking {len(windows_2027)} Thu-Mon window(s)...")
+        print(f"2027: {len(windows_2027)} Thu-Mon window(s) to check")
         for arrival, nights in windows_2027:
             print(f"  {arrival} x{nights}n ... ", end="", flush=True)
             sites = check_window(session, arrival, nights)
             print(", ".join(sites) if sites else "full")
             if sites:
                 current[window_key(arrival, nights)] = sites
-        time.sleep(DELAY_BETWEEN_REQUESTS)
+            time.sleep(DELAY_BETWEEN_REQUESTS)
 
     send_email(current, previous)
     save_state(current)

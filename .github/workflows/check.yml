@@ -6,7 +6,7 @@ on:
   workflow_dispatch:       # lets you trigger a test run manually from GitHub
 
 permissions:
-  contents: write          # needed to commit the state file back
+  contents: write
 
 jobs:
   check:
@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # full history so rebase always has a base
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,7 +35,8 @@ jobs:
         run: |
           git config user.name  "campsite-bot"
           git config user.email "action@github.com"
-          git add --force last_alerted.json || true
-          git diff --staged --quiet && echo "No state changes to commit" || git commit -m "chore: update availability state"
-          git pull --rebase origin main
+          git fetch origin main
+          git rebase origin/main
+          git add last_alerted.json
+          git diff --staged --quiet && echo "No state changes" || git commit -m "chore: update availability state"
           git push
