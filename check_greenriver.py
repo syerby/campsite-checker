@@ -105,51 +105,37 @@ def make_session() -> requests.Session:
 
 def get_available_sites(html: str) -> list:
     """
-    Parse the calendar HTML and return a list of available site names.
-    ReserveAmerica renders a table where each row is a site and cells show
-    A (available) / R (reserved) / X (closed) for each date in the window.
+    Parse the ReserveAmerica calendar HTML and return sites available for the
+    entire requested stay. The calendar is a table where each row is one site
+    (name in first cell, e.g. [T01]) and each subsequent cell is one night,
+    shown as a linked "A" if available or plain "R"/"X" if not.
+    A site is only included if ALL night-cells contain a linked "A".
     """
     soup = BeautifulSoup(html, "html.parser")
     sites = []
 
-    # Strategy 1: table rows where at least one cell is "A" — site name in first cell
     for row in soup.find_all("tr"):
         cells = row.find_all("td")
         if len(cells) < 2:
             continue
-        has_available = any(c.get_text(strip=True).upper() == "A" for c in cells)
-        if not has_available:
-            # Also check for class-based availability markers
-            has_available = any(
-                "avail" in (c.get("class") or [""])[0].lower()
-                for c in cells
-            )
-        if has_available:
-            name = cells[0].get_text(strip=True)
-            if name and name.upper() not in ("A", "R", "X", ""):
-                sites.append(name)
 
-    # Strategy 2: elements whose class suggests a site name label
-    if not sites:
-        for tag in soup.find_all(True, class_=lambda c: c and any(
-            x in " ".join(c).lower() for x in ["sitename", "site-name", "unitname", "unit-name"]
-        )):
-            name = tag.get_text(strip=True)
-            if name:
-                sites.append(name)
+        site_name = cells[0].get_text(strip=True).strip("[]")
+        if not site_name or site_name.upper() in ("A", "R", "X"):
+            continue
 
-    # Strategy 3: no "no sites" message + a reserve link = something is open,
-    # but we couldn't parse the name
-    if not sites:
-        text = soup.get_text(" ", strip=True).lower()
-        if "no sites" in text or "no campsites" in text or "0 site" in text:
-            return []
-        for a in soup.find_all("a", href=True):
-            if "reserve" in a["href"].lower():
-                sites.append("site details on website")
-                break
+        date_cells = cells[1:]
+        if not date_cells:
+            continue
 
-    return list(dict.fromkeys(sites))  # deduplicate while preserving order
+        # Every night must be a linked "A" for the site to be truly available
+        all_open = all(
+            c.find("a") and c.find("a").get_text(strip=True).upper() == "A"
+            for c in date_cells
+        )
+        if all_open:
+            sites.append(site_name)
+
+    return sites
 
 
 def check_window(session: requests.Session, arrival: date, nights: int) -> list:
