@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0    # full history so rebase always has a base
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,8 +33,16 @@ jobs:
         run: |
           git config user.name  "campsite-bot"
           git config user.email "action@github.com"
+
+          # Capture the state the script just wrote
+          STATE=$(cat last_alerted.json)
+
+          # Reset to whatever is on the remote right now (avoids any push conflicts)
           git fetch origin main
-          git rebase origin/main
+          git reset --hard origin/main
+
+          # Restore the state and commit if it changed
+          echo "$STATE" > last_alerted.json
           git add last_alerted.json
           git diff --staged --quiet && echo "No state changes" || git commit -m "chore: update availability state"
-          git push
+          git push origin main
