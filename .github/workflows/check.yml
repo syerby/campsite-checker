@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4
 
+      - name: Show script version
+        run: head -5 check_greenriver.py && grep "Available windows\|New availability\|def get_available_sites" check_greenriver.py
+
       - name: Run availability check
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
